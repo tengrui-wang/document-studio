@@ -16,7 +16,7 @@ git push origin v0.1.0
 
 固定 AppId、凭据服务和数据路径不得随版本改名。程序目录与用户数据分离；普通卸载永远不删除用户数据或凭据。新增配置字段应兼容原 schema 并在首次保存前备份，不能通过重置配置解决迁移问题。
 
-安装验证脚本 scripts/verify_installer_lifecycle.py **只允许在 GitHub 独立 Windows runner 上执行**，避免改动用户现有安装和配置。它实际运行新安装、已发布 v0.1.0 安装、复制后故障注入、覆盖升级、注册卸载入口和卸载，并比对合成配置/模型/术语表/任务/断点的 SHA256 及 Windows 原生凭据。故障测试安装包只在 build/lifecycle 内，不作为 Release 附件。
+安装验证脚本 scripts/verify_installer_lifecycle.py **只允许在 GitHub 独立 Windows runner 上执行**，避免改动用户现有安装和配置。它实际运行新安装、已发布 v0.1.0 安装、缺失安装 payload 的故障注入、覆盖升级、注册卸载入口和卸载，并比对合成配置/模型/术语表/任务/断点的 SHA256 及 Windows 原生凭据。故障测试安装包只在 build/lifecycle 内，不作为 Release 附件。
 
 没有可用 GitHub 仓库创建/推送凭据时，本地代码和工作流仍完整可用；按上述步骤授权后即可发布。API 密钥与 GitHub 发布凭据相互独立。本机 Git 提交不代表已经发布远端。
 

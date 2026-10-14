@@ -43,6 +43,7 @@ jobs:
             release/INSTALLER-VERIFICATION.json
             build/packaged-selftest.json
             build/lifecycle/state.json
+            build/lifecycle/*.log
       - uses: actions/upload-artifact@v4
         with:
           name: DocumentStudio-Windows-x64

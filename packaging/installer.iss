@@ -34,6 +34,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 [Files]
+#ifdef LifecycleFault
+; Test-only: fail on a deliberately missing external payload during installation.
+; The fault build is never placed in Release assets.
+Source: "..\dist\DocumentStudio\DocumentStudio.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{tmp}\DocumentStudio-Injected-Missing-Payload.bin"; DestDir: "{app}"; Flags: external ignoreversion; ExternalSize: 1
+#endif
 Source: "..\dist\DocumentStudio\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Icons]
 Name: "{group}\Document Studio"; Filename: "{app}\DocumentStudio.exe"
@@ -54,10 +60,3 @@ begin
     Result := '';
 end;
 
-#ifdef LifecycleFault
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then
-    RaiseException('Injected installation failure for isolated CI verification.');
-end;
-#endif

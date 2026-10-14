@@ -115,12 +115,12 @@ def main():
         assert (backup / "manifest.json").is_file()
         record("upgrade_backup_verified")
 
-        # Compile a fault-only installer OUTSIDE release assets; inject post-copy failure.
+        # Compile a fault-only installer OUTSIDE Release assets; missing external payload.
         execute(args.compiler, [f"/DAppVersion={__version__}", "/DLifecycleFault=1", f"/O{test_root}", "/FLifecycleFailure", str(root / "packaging/installer.iss")])
         failure_code = execute(test_root / "LifecycleFailure.exe", quiet + [f"/LOG={test_root / 'failure.log'}"], success=False)
         retained(original)
         report["injected_failure_exit"] = failure_code
-        record("post_copy_upgrade_failure_preserves_all_personal_data")
+        record("missing_payload_upgrade_failure_preserves_all_personal_data")
         execute(installer, quiet + [f"/DIR={user_data}", f"/LOG={test_root / 'overlap.log'}"], success=False)
         retained(original)
         record("program_data_directory_overlap_rejected")
