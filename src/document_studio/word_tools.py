@@ -121,12 +121,24 @@ def locate_soffice(configured=""):
 
 def word_to_pdf(source: Path, dest: Path, options, progress, cancel):
     check_cancel(cancel)
+    # Word can fetch remote templates/OLE links while opening a DOCX. Fail closed.
+    import zipfile
+    from lxml import etree
+    with zipfile.ZipFile(source) as archive:
+        if sum(item.file_size for item in archive.infolist()) > 300 * 1024 * 1024:
+            raise ValueError("Word 文件解压后过大，当前限制为 300 MB。")
+        for name in archive.namelist():
+            if name.endswith(".rels"):
+                relationships = etree.fromstring(archive.read(name), etree.XMLParser(resolve_entities=False, no_network=True))
+                for relationship in relationships:
+                    if relationship.get("TargetMode") == "External" and not relationship.get("Type", "").endswith("/hyperlink"):
+                        raise ValueError("文档含外部模板、链接图片或 OLE 资源，请在 Word 中断开外部链接后转换，以确保本地处理。")
     backend = options.get("backend", "auto")
     if backend in ("auto", "word") and os.name == "nt":
         import pythoncom
         import win32com.client
         pythoncom.CoInitialize()
-        app, doc = None, None
+        app, doc, old_update_links = None, None, None
         try:
             try:
                 app = win32com.client.DispatchEx("Word.Application")
@@ -138,8 +150,10 @@ def word_to_pdf(source: Path, dest: Path, options, progress, cancel):
                 app.Visible = False
                 app.DisplayAlerts = 0
                 app.AutomationSecurity = 3  # force-disable macros
+                old_update_links = app.Options.UpdateLinksAtOpen
+                app.Options.UpdateLinksAtOpen = False
                 doc = app.Documents.Open(str(source.resolve()), ReadOnly=True, AddToRecentFiles=False,
-                                         ConfirmConversions=False, UpdateLinks=0)
+                                         ConfirmConversions=False)
                 check_cancel(cancel)
                 doc.ExportAsFixedFormat(str(dest.resolve()), 17)
                 return
@@ -147,6 +161,8 @@ def word_to_pdf(source: Path, dest: Path, options, progress, cancel):
             if doc is not None:
                 doc.Close(False)
             if app is not None:
+                if old_update_links is not None:
+                    app.Options.UpdateLinksAtOpen = old_update_links
                 app.Quit()
             pythoncom.CoUninitialize()
     executable = locate_soffice(options.get("soffice", ""))

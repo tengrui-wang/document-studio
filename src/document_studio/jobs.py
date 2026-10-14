@@ -73,9 +73,12 @@ def worker(task_data, events, cancel, cache_root, stage_name):
                 target = stage / f"{source.stem}_formatted.docx"
                 word_format(source, target, task.options, progress, cancel)
             else:
-                from .translation import translate_docx
+                from .translation import translate_docx, digest_file
                 original = source
                 if source.suffix.lower() == ".pdf":
+                    import importlib.metadata
+                    task.options["_source_sha256"] = digest_file(source)
+                    task.options["_converter"] = "pdf2docx/" + importlib.metadata.version("pdf2docx")
                     original = stage / "translation-source.docx"
                     pdf_to_word(source, original, progress, cancel)
                 target = stage / f"{source.stem}_translated.docx"
@@ -199,7 +202,7 @@ class TaskManager(QObject):
     def start(self, task):
         self.active = task
         self.events, self.cancel_event = self.ctx.Queue(), self.ctx.Event()
-        self.stage = Path(task.output) / f".document-studio-{task.id}" if task.output else None
+        self.stage = Path(task.output) / f".document-studio-{uuid.uuid4().hex}" if task.output else None
         self.process = self.ctx.Process(target=worker, args=(asdict(task), self.events, self.cancel_event,
                                           str(self.settings.root / "checkpoints"), str(self.stage) if self.stage else ""))
         task.status = "运行"

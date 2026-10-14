@@ -23,9 +23,11 @@ def digest_file(source: Path):
 
 def translate_docx(source: Path, dest: Path, options, client, cache_dir: Path, progress, cancel):
     size = max(200, min(6000, int(options.get("chunk_size", 2500))))
-    identity = {"sha256": digest_file(source), "endpoint": client.base, "protocol": client.provider,
+    fragment_limit = min(size, 1200)
+    identity = {"sha256": options.get("_source_sha256") or digest_file(source), "endpoint": client.base, "protocol": client.provider,
                 "model": options["model"], "source": options["source_lang"],
-                "target": options["target_lang"], "glossary": options.get("glossary", ""), "schema": 1}
+                "target": options["target_lang"], "glossary": options.get("glossary", ""),
+                "fragment_limit": fragment_limit, "converter": options.get("_converter", "docx"), "schema": 1}
     signature = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     checkpoint = cache_dir / f"{signature}.json"
     cache = {"identity": identity, "translations": {}}
@@ -61,7 +63,7 @@ def translate_docx(source: Path, dest: Path, options, client, cache_dir: Path, p
                         continue
                     # Stable ids depend on document content, not the API batching limit.
                     group_id = len(groups)
-                    fragments = [text[start:start + 1200] for start in range(0, len(text), 1200)]
+                    fragments = [text[start:start + fragment_limit] for start in range(0, len(text), fragment_limit)]
                     ids = []
                     for fragment_id, fragment in enumerate(fragments):
                         ident = f"p{group_id}s{fragment_id}"

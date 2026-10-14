@@ -101,6 +101,14 @@ class APIClient:
         return sorted(set(results))
 
     def complete(self, model, system, user):
+        try:
+            return self._complete(model, system, user)
+        except APIError:
+            raise
+        except (KeyError, TypeError, ValueError, IndexError, AttributeError):
+            raise APIError("服务商返回了不完整或不支持的响应结构。") from None
+
+    def _complete(self, model, system, user):
         if not model:
             raise ValueError("请先选择模型。")
         if self.provider == "anthropic":
