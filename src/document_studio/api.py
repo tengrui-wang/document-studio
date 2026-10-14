@@ -23,6 +23,10 @@ class APIError(ValueError):
     pass
 
 
+class TranslationValidationError(APIError):
+    pass
+
+
 def validate_base_url(value: str) -> str:
     value = value.strip().rstrip("/")
     parsed = urlsplit(value)
@@ -117,7 +121,7 @@ class APIClient:
             usage = data.get("usage", {})
             self.usage(int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0)))
             if data.get("stop_reason") == "max_tokens":
-                raise APIError("译文被模型截断，请降低分块大小并重试。")
+                raise TranslationValidationError("译文被模型截断，请降低分块大小并重试。")
             result = "".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text")
         else:
             data = self.request("POST", "/chat/completions", {"model": model,
@@ -128,7 +132,7 @@ class APIClient:
             if not choices:
                 raise APIError("模型没有返回文本。请选择支持 Chat Completions 的文本模型。")
             if choices[0].get("finish_reason") in ("length", "content_filter"):
-                raise APIError("译文被截断或过滤，请降低分块大小或更换模型。")
+                raise TranslationValidationError("译文被截断或过滤，请降低分块大小或更换模型。")
             result = choices[0].get("message", {}).get("content")
         if not isinstance(result, str) or not result.strip():
             raise APIError("模型返回空文本或不支持的响应格式。")
@@ -155,9 +159,16 @@ class APIClient:
                     raise ValueError()
                 if any(not isinstance(item["text"], str) or not item["text"].strip() for item in items):
                     raise ValueError()
+                from collections import Counter
+                for source_item, output_item in zip(entries, items):
+                    # Conservative numeric omission detection. Keep digits verbatim in the prompt.
+                    numbers = Counter(re.findall(r"\d+(?:[.,]\d+)*", source_item["text"]))
+                    translated_numbers = Counter(re.findall(r"\d+(?:[.,]\d+)*", output_item["text"]))
+                    if numbers - translated_numbers:
+                        raise ValueError()
                 return items
             except (KeyError, TypeError, ValueError):
                 if attempt == 2:
-                    raise APIError("译文校验失败：段落 ID、顺序、数量或内容不完整。已保留断点，请更换模型或减小分块后重试。") from None
+                    raise TranslationValidationError("译文校验失败：段落 ID、顺序、数量、数字或内容不完整。已保留断点，请更换模型或减小分块后重试。") from None
                 self.pause(1)
         raise APIError("译文校验失败。")

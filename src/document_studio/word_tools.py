@@ -119,6 +119,23 @@ def locate_soffice(configured=""):
     return next((p for p in candidates if p and Path(p).is_file()), None)
 
 
+def detect_engines(configured=""):
+    word = False
+    if os.name == "nt":
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "Word.Application\\CLSID") as key:
+                identifier = winreg.QueryValueEx(key, "")[0]
+            with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, f"CLSID\\{identifier}\\LocalServer32") as key:
+                command = winreg.QueryValueEx(key, "")[0]
+            import re
+            match = re.match(r'^\s*"?(.+?\.exe)"?(?:\s|$)', command, re.IGNORECASE)
+            word = bool(match and Path(os.path.expandvars(match[1])).is_file())
+        except OSError:
+            pass
+    return {"word": word, "libreoffice": locate_soffice(configured)}
+
+
 def word_to_pdf(source: Path, dest: Path, options, progress, cancel):
     check_cancel(cancel)
     # Word can fetch remote templates/OLE links while opening a DOCX. Fail closed.
@@ -156,15 +173,25 @@ def word_to_pdf(source: Path, dest: Path, options, progress, cancel):
                                          ConfirmConversions=False)
                 check_cancel(cancel)
                 doc.ExportAsFixedFormat(str(dest.resolve()), 17)
+                if not dest.is_file() or not dest.stat().st_size:
+                    raise ValueError("Microsoft Word 未生成有效 PDF，请检查文档。")
                 return
+        except pythoncom.com_error:
+            raise ValueError("Microsoft Word 导出失败。请检查 Word 激活状态、文件权限和文档是否可正常打开，或改用 LibreOffice。") from None
         finally:
-            if doc is not None:
-                doc.Close(False)
-            if app is not None:
-                if old_update_links is not None:
-                    app.Options.UpdateLinksAtOpen = old_update_links
-                app.Quit()
-            pythoncom.CoUninitialize()
+            try:
+                if doc is not None:
+                    doc.Close(False)
+            finally:
+                try:
+                    if app is not None:
+                        try:
+                            if old_update_links is not None:
+                                app.Options.UpdateLinksAtOpen = old_update_links
+                        finally:
+                            app.Quit()
+                finally:
+                    pythoncom.CoUninitialize()
     executable = locate_soffice(options.get("soffice", ""))
     if not executable:
         raise ValueError("Word 转 PDF 需要本机 Microsoft Word 或 LibreOffice。请安装任一软件；Document Studio 本身无需 Python。")

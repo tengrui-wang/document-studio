@@ -21,12 +21,28 @@ jobs:
           python -m pip install -r requirements-lock.txt
           python -m pip install --no-deps --no-build-isolation -e .
       - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
+        shell: powershell
+        run: |
+          if (-not (Test-Path 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe')) { choco install innosetup --no-progress -y }
       - name: Build and test Windows package
         shell: powershell
         run: ./scripts/build.ps1 -Python python
       - name: Archive matching source
         run: git archive --format=zip -o release/DocumentStudio-Source.zip HEAD
+      - name: Verify fresh install, v0.1.0 upgrade, failure safety and uninstall
+        shell: powershell
+        run: |
+          $version = (python -c 'from document_studio import __version__; print(__version__)').Trim()
+          python scripts/verify_installer_lifecycle.py --installer "release/DocumentStudio-$version-Setup.exe" --compiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+      - name: Upload lifecycle verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Installer-verification
+          path: |
+            release/INSTALLER-VERIFICATION.json
+            build/packaged-selftest.json
+            build/lifecycle/state.json
       - uses: actions/upload-artifact@v4
         with:
           name: DocumentStudio-Windows-x64
@@ -47,4 +63,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" release/* --verify-tag --title "Document Studio $RELEASE_TAG" --generate-notes
+        shell: bash
+        run: |
+          EXTRA=()
+          if [[ "$RELEASE_TAG" == *"-"* ]]; then EXTRA=(--prerelease --latest=false); fi
+          gh release create "$RELEASE_TAG" release/* --verify-tag --title "Document Studio $RELEASE_TAG" --notes-file release/RELEASE-NOTES.md "${EXTRA[@]}"

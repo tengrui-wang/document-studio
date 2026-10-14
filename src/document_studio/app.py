@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
 from . import __version__
 from .api import PRESETS, validate_base_url
 from .jobs import Task, TaskManager
-from .storage import Settings, Credentials
+from .storage import Settings, Credentials, backup_user_data
 
 
 def button(text, callback):
@@ -170,6 +170,10 @@ class ConvertPage(WorkPage):
         self.backend = combo([("自动：优先 Microsoft Word", "auto"), ("Microsoft Word", "word"), ("LibreOffice", "libreoffice")])
         self.form.addRow("转换方式", self.mode)
         self.form.addRow("Word 导出引擎", self.backend)
+        self.engine_status = note("")
+        self.layout.addWidget(self.engine_status)
+        self.layout.addWidget(button("重新检测 Word / LibreOffice", self.refresh_engines))
+        self.refresh_engines()
         self.layout.addWidget(note("PDF → Word 适用于含原生文字的 PDF；扫描页需先 OCR。复杂公式、多栏和表格不能保证完全还原。Word → PDF 需要本机安装 Word 或 LibreOffice。"))
         self.layout.addWidget(button("开始批量转换", self.run))
         self.layout.addStretch()
@@ -178,6 +182,11 @@ class ConvertPage(WorkPage):
         operation = self.mode.currentData()
         self.submit(operation, {"backend": self.backend.currentData(), "soffice": self.window.settings.data["soffice"]},
                     (".pdf",) if operation == "pdf_to_word" else (".docx",))
+
+    def refresh_engines(self):
+        from .word_tools import detect_engines
+        engines = detect_engines(self.window.settings.data["soffice"])
+        self.engine_status.setText(f"Microsoft Word：{'已检测到' if engines['word'] else '未检测到'}；LibreOffice：{'已检测到' if engines['libreoffice'] else '未检测到'}。不会自动安装依赖。")
 
 
 class TranslatePage(WorkPage):
@@ -189,15 +198,28 @@ class TranslatePage(WorkPage):
         self.target = combo([("英语", "English"), ("中文", "Chinese"), ("日语", "Japanese"), ("德语", "German"), ("法语", "French")])
         self.source.setEditable(True)
         self.target.setEditable(True)
+        self.output_pdf = QCheckBox("同时输出译文 PDF（需要 Word 或 LibreOffice）")
         self.form.addRow("服务配置", self.profile)
         self.form.addRow("翻译模型", self.model)
         self.form.addRow("原文语言", self.source)
         self.form.addRow("目标语言", self.target)
+        self.form.addRow(self.output_pdf)
         advanced = self.advanced()
         self.chunk = number(2500, 200, 6000)
+        preferences = window.settings.data["translation_preferences"]
+        self.chunk.setValue(preferences.get("chunk_size", 2500))
+        for widget, key in ((self.source, "source_lang"), (self.target, "target_lang")):
+            if key in preferences:
+                index = widget.findData(preferences[key])
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+                else:
+                    widget.setEditText(preferences[key])
         self.glossary = QTextEdit()
         self.glossary.setPlaceholderText("每行一个术语，例如：machine learning = 机器学习")
         self.glossary.setMaximumHeight(100)
+        self.glossary.setPlainText(window.settings.data["glossary"])
+        advanced.addRow(button("保存术语表及翻译偏好", self.save_preferences))
         advanced.addRow("每批字符预算", self.chunk)
         advanced.addRow("术语表", self.glossary)
         self.layout.addWidget(note("将文档文本发送至所选云服务，会产生该服务的费用。Word 保留图片、公式及 XML 结构，译文可能改变分页和局部字体样式。PDF 先转 Word，输出 DOCX；当前不提供原版式 PDF 翻译。图片内文字、目录等域和公式保留原样。断点译文保存在本机，可在设置中清除。"))
@@ -235,15 +257,36 @@ class TranslatePage(WorkPage):
             profile = self.selected_profile()
             if not profile or not self.model.currentData():
                 raise ValueError("请在 AI 模型管理保存服务和模型，然后明确选择翻译模型。")
+            if self.output_pdf.isChecked():
+                from .word_tools import detect_engines
+                engines = detect_engines(self.window.settings.data["soffice"])
+                if not engines["word"] and not engines["libreoffice"]:
+                    raise ValueError("译文 PDF 输出需要 Word 或 LibreOffice；尚未开始 API 请求，请安装导出引擎或只输出 DOCX。")
             source = self.source.currentData() or self.source.currentText()
             target = self.target.currentData() or self.target.currentText()
             if not source.strip() or not target.strip() or source == target:
                 raise ValueError("原文和目标语言必须非空且不同。")
+            if not self.save_preferences():
+                return
             self.submit("translate", {"profile": dict(profile), "model": self.model.currentData(),
                         "source_lang": source, "target_lang": target, "chunk_size": self.chunk.value(),
-                        "glossary": self.glossary.toPlainText()}, (".pdf", ".docx"))
+                        "glossary": self.glossary.toPlainText(), "output_pdf": self.output_pdf.isChecked(),
+                        "soffice": self.window.settings.data["soffice"]}, (".pdf", ".docx"))
         except Exception as exc:
             self.window.error(exc)
+
+    def save_preferences(self):
+        try:
+            self.window.settings.data["glossary"] = self.glossary.toPlainText()
+            self.window.settings.data["translation_preferences"] = {"chunk_size": self.chunk.value(),
+                "source_lang": self.source.currentData() or self.source.currentText(),
+                "target_lang": self.target.currentData() or self.target.currentText()}
+            self.window.settings.save()
+            self.window.statusBar().showMessage("术语表和翻译偏好已保存", 4000)
+            return True
+        except Exception as exc:
+            self.window.error(exc)
+            return False
 
 
 class PDFPage(WorkPage):
@@ -263,13 +306,17 @@ class PDFPage(WorkPage):
         self.dpi = number(144, 72, 300)
         self.threshold = number(180, 120, 245)
         self.monochrome = QCheckBox("转换为黑白")
+        self.enhance = QCheckBox("增强深色文字（必要图片仍按保护选项处理）")
+        self.keep_text = QCheckBox("保留原始可搜索文字层（预览功能，仅原生文字 PDF）")
         self.preserve = QCheckBox("保留嵌入图片原色（扫描页整页图片也会被保留）")
         self.preserve.setChecked(True)
         advanced.addRow("白化 DPI", self.dpi)
         advanced.addRow("白化阈值（越低越强）", self.threshold)
         advanced.addRow(self.monochrome)
+        advanced.addRow(self.enhance)
+        advanced.addRow(self.keep_text)
         advanced.addRow(self.preserve)
-        self.layout.addWidget(note("白化仅用于打印：输出为图像 PDF，文字不可搜索，链接等交互信息不保留。浅色文字和绘图可能受影响，请先预览。扫描 PDF 若需白化，关闭“保留嵌入图片原色”。"))
+        self.layout.addWidget(note("白化默认输出图像 PDF。可选“保留文字层”会在原页面上覆盖处理后的图像，以保留搜索和复制，文件较大且不提供 OCR；原始内容仍保存在文件中，不适合敏感内容删改。浅色文字可能受影响，请先预览。扫描 PDF 白化需关闭图片保护。"))
         self.layout.addWidget(button("预览白化效果", self.preview))
         self.layout.addWidget(button("执行 PDF 操作", self.run))
         self.layout.addStretch()
@@ -277,7 +324,7 @@ class PDFPage(WorkPage):
     def options(self):
         return {"pages": self.pages.text(), "split_size": self.split_size.value(), "angle": self.angle.currentData(),
                 "dpi": self.dpi.value(), "threshold": self.threshold.value(), "monochrome": self.monochrome.isChecked(),
-                "preserve_images": self.preserve.isChecked()}
+                "preserve_images": self.preserve.isChecked(), "enhance_text": self.enhance.isChecked(), "keep_text": self.keep_text.isChecked()}
 
     def run(self):
         operation = self.operation.currentData()
@@ -298,7 +345,7 @@ class PDFPage(WorkPage):
                 page = doc[page_numbers(self.pages.text(), len(doc))[0]]
                 import pymupdf as fitz
                 for title, pix in (("处理前", page.get_pixmap(matrix=fitz.Matrix(1, 1), colorspace=fitz.csRGB, alpha=False)),
-                    ("处理后", render_processed(page, min(self.dpi.value(), 144), self.threshold.value(), self.monochrome.isChecked(), self.preserve.isChecked()))):
+                    ("处理后", render_processed(page, min(self.dpi.value(), 144), self.threshold.value(), self.monochrome.isChecked(), self.preserve.isChecked(), self.enhance.isChecked()))):
                     column = QVBoxLayout()
                     column.addWidget(QLabel(title))
                     image = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888).copy()
@@ -565,29 +612,107 @@ class SettingsPage(QWidget):
         self.repository.setPlaceholderText("owner/document-studio")
         self.soffice = QLineEdit(window.settings.data["soffice"])
         self.soffice.setPlaceholderText("可选：自定义 soffice.exe 绝对路径；默认自动查找")
+        self.preview_channel = QCheckBox("包含预览版（正式版通道不会自动推荐预览版）")
+        self.preview_channel.setChecked(window.settings.data["update_channel"] == "preview")
         form.addRow("GitHub 更新仓库", self.repository)
         form.addRow("LibreOffice 路径", self.soffice)
+        form.addRow("更新通道", self.preview_channel)
         layout.addLayout(form)
         layout.addWidget(button("保存设置", self.save))
         layout.addWidget(button("检查新版本", self.updates))
+        self.update_label = note("更新无需 GitHub Token；只有点击安装后才退出应用并启动安装向导。")
+        layout.addWidget(self.update_label)
+        self.release_notes = QTextEdit()
+        self.release_notes.setReadOnly(True)
+        self.release_notes.setMaximumHeight(150)
+        self.release_notes.setPlaceholderText("检查更新后在此显示版本说明")
+        layout.addWidget(self.release_notes)
+        self.available_release = None
+        self.downloaded = None
+        self.download_button = button("下载新版本安装包", self.download)
+        self.install_button = button("备份数据并安装已下载更新", self.install)
+        self.download_button.setEnabled(False)
+        self.install_button.setEnabled(False)
+        layout.addWidget(self.download_button)
+        layout.addWidget(self.install_button)
+        layout.addWidget(button("备份个人配置、任务及翻译断点", self.backup))
         layout.addWidget(button("打开本机数据目录", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(window.settings.root)))))
         layout.addWidget(button("清除本机翻译断点", self.clear_cache))
         layout.addWidget(note(f"Document Studio {__version__} · AGPL-3.0-or-later\n设置、任务历史与断点译文位于：{window.settings.root}\n断点包含译文，任务历史包含文件路径及术语表；请按私人文档保护本机账户。仅主动翻译、模型测试/获取和更新检查访问网络。清除断点后无法续传。"))
         layout.addStretch()
+        for task in reversed(window.manager.tasks):
+            if task.operation == "download_update" and task.status == "完成":
+                self.receive_update(task)
+                break
 
     def save(self):
         try:
             self.window.settings.data["repository"] = self.repository.text().strip()
             self.window.settings.data["soffice"] = self.soffice.text().strip()
+            self.window.settings.data["update_channel"] = "preview" if self.preview_channel.isChecked() else "stable"
             self.window.settings.save()
             self.window.statusBar().showMessage("设置已保存", 4000)
+            return True
         except Exception as exc:
             self.window.error(exc)
+            return False
 
     def updates(self):
-        self.save()
-        self.window.manager.add(Task("检查新版本", "updates", [], "", {"repository": self.repository.text().strip()}))
+        if not self.save():
+            return
+        self.window.manager.add(Task("检查新版本", "updates", [], "", {"repository": self.repository.text().strip(), "include_preview": self.preview_channel.isChecked()}))
         self.window.nav.setCurrentRow(5)
+
+    def receive_update(self, task):
+        from packaging.version import Version
+        if task.operation == "updates":
+            self.available_release = task.result.get("release") if task.result.get("newer") else None
+            self.update_label.setText(task.result.get("message", ""))
+            self.release_notes.setPlainText(task.result.get("release", {}).get("notes", ""))
+            self.download_button.setEnabled(bool(self.available_release and self.available_release.get("asset")))
+        elif task.operation == "download_update" and task.result.get("installer"):
+            self.downloaded = task.result
+            self.update_label.setText(f"{task.result['release']['tag']} 已下载并校验。安装将保留个人数据，首先创建备份。")
+            self.release_notes.setPlainText(task.result["release"]["notes"])
+            self.install_button.setEnabled(Path(task.result["installer"]).is_file() and Version(task.result["release"]["version"]) > Version(__version__))
+
+    def download(self):
+        if self.available_release:
+            if any(t.operation == "download_update" and t.status in ("运行", "等待", "取消中") for t in self.window.manager.tasks):
+                self.window.error(ValueError("更新下载已经在进行。"))
+                return
+            self.window.manager.add(Task("下载更新安装包", "download_update", [], "", {"release": self.available_release}))
+            self.window.nav.setCurrentRow(5)
+
+    def backup(self):
+        try:
+            if self.window.manager.active or any(t.status == "等待" for t in self.window.manager.tasks):
+                raise ValueError("请先完成或取消任务，以生成一致的数据备份。")
+            self.window.settings.save()
+            self.window.manager.save()
+            path = backup_user_data(self.window.settings.root)
+            self.window.statusBar().showMessage(f"备份已完成：{path}", 10000)
+            return path
+        except Exception as exc:
+            self.window.error(exc)
+            return None
+
+    def install(self):
+        try:
+            if not self.downloaded:
+                raise ValueError("请先下载并校验更新安装包。")
+            if self.window.manager.active or any(t.status == "等待" for t in self.window.manager.tasks):
+                raise ValueError("请先完成或取消任务后再安装更新。")
+            if not self.window.translate.save_preferences() or not self.save():
+                return
+            path = self.backup()
+            if path is None:
+                return
+            from .updates import launch_installer
+            launch_installer(Path(self.downloaded["installer"]), self.downloaded["sha256"])
+            self.window.close()
+        except Exception as exc:
+            self.window.error(exc)
 
     def clear_cache(self):
         try:
@@ -596,6 +721,9 @@ class SettingsPage(QWidget):
             # Delete only named checkpoint files inside the app's own data folder.
             cache = self.window.settings.root / "checkpoints"
             if cache.exists():
+                answer = QMessageBox.question(self, "清除翻译断点", "这会删除本机保存的断点译文，之后不能续传。确认清除？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
                 for path in cache.glob("*.json"):
                     path.unlink()
             self.window.statusBar().showMessage("已清除翻译断点", 4000)
@@ -626,13 +754,14 @@ class MainWindow(QMainWindow):
         heading.setObjectName("heading")
         h.addWidget(heading)
         h.addWidget(note("Word / PDF 文档工作台\n本地转换与批量工具 · 云端文档翻译"))
-        h.addWidget(note("使用顺序：选择功能 → 添加或拖入文件 → 选择输出目录 → 执行 → 在任务中心打开结果。\n没有 API Key 也可使用全部离线工具。翻译前到 AI 模型管理添加服务配置和模型。\n这是 0.1.0 核心版本，复杂 PDF 排版和翻译质量需要人工复核。"))
+        h.addWidget(note("使用顺序：选择功能 → 添加或拖入文件 → 选择输出目录 → 执行 → 在任务中心打开结果。\n没有 API Key 也可使用全部离线工具。翻译前到 AI 模型管理添加服务配置和模型。\n这是核心预览版本，复杂 PDF 排版和翻译质量需要人工复核。"))
         for index, text in ((1, "转换 Word / PDF"), (3, "处理 PDF"), (4, "批量调整 Word"), (6, "配置翻译 API")):
             h.addWidget(button(text, lambda checked=False, i=index: self.nav.setCurrentRow(i)))
         h.addStretch()
         self.translate = TranslatePage(self)
         self.ai = AIPage(self)
-        pages = [home, ConvertPage(self), self.translate, PDFPage(self), WordPage(self), TasksPage(self), self.ai, SettingsPage(self)]
+        self.preferences = SettingsPage(self)
+        pages = [home, ConvertPage(self), self.translate, PDFPage(self), WordPage(self), TasksPage(self), self.ai, self.preferences]
         for page in pages:
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
@@ -648,6 +777,9 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, "操作未完成", str(exc))
 
     def task_finished(self, task):
+        if task.status == "完成" and task.operation in ("updates", "download_update"):
+            self.preferences.receive_update(task)
+            self.nav.setCurrentRow(7)
         if task.operation == "models" and task.status == "完成":
             snapshot = task.options["profile"]
             for profile in self.settings.data["profiles"]:
@@ -677,6 +809,15 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Document Studio")
     app.setOrganizationName("DocumentStudio")
+    from .lifecycle import create_app_mutex
+    try:
+        mutex_handle, already_running = create_app_mutex()
+        if already_running:
+            QMessageBox.information(None, "Document Studio", "Document Studio 已在运行，请切换到已有窗口。")
+            return
+    except RuntimeError as exc:
+        QMessageBox.warning(None, "启动失败", str(exc))
+        return
     app.setStyle("Fusion")
     app.setStyleSheet("""
         QWidget { font-family: 'Microsoft YaHei UI', 'Segoe UI'; font-size: 13px; }
@@ -692,7 +833,11 @@ def main():
         QGroupBox { border: 1px solid #dce2eb; border-radius: 6px; margin-top: 14px; padding: 12px; }
         QGroupBox::title { subcontrol-origin: margin; left: 10px; }
     """)
-    window = MainWindow()
+    try:
+        window = MainWindow()
+    except (ValueError, OSError) as exc:
+        QMessageBox.warning(None, "配置读取失败", str(exc))
+        return
     window.show()
     if "--smoke-test" in sys.argv:
         QTimer.singleShot(1200, app.quit)

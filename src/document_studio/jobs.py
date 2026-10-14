@@ -43,6 +43,11 @@ def worker(task_data, events, cancel, cache_root, stage_name):
     client = None
     try:
         check_cancel(cancel)
+        if task.operation == "translate" and task.options.get("output_pdf"):
+            from .word_tools import detect_engines
+            engines = detect_engines(task.options.get("soffice", ""))
+            if not engines["word"] and not engines["libreoffice"]:
+                raise ValueError("译文 PDF 导出引擎不可用，尚未调用翻译 API。请安装 Word/LibreOffice 或改为 DOCX 输出。")
         if task.operation in ("models", "test_api", "translate"):
             from .api import APIClient
             profile = task.options["profile"]
@@ -56,7 +61,12 @@ def worker(task_data, events, cancel, cache_root, stage_name):
             return
         if task.operation == "updates":
             from .updates import check_update
-            events.put(("done", [], check_update(task.options["repository"])))
+            events.put(("done", [], check_update(task.options["repository"], task.options.get("include_preview", False))))
+            return
+        if task.operation == "download_update":
+            from .updates import download_update
+            result = download_update(task.options["release"], Path(cache_root).parent / "updates", progress, cancel)
+            events.put(("done", [result["installer"]], result))
             return
         stage.mkdir(parents=True, exist_ok=False)
         if task.operation in ("pdf_to_word", "word_to_pdf", "word_format", "translate"):
@@ -84,6 +94,17 @@ def worker(task_data, events, cancel, cache_root, stage_name):
                 target = stage / f"{source.stem}_translated.docx"
                 translate_docx(original, target, task.options, client, Path(cache_root), progress, cancel)
             produced = [target]
+            if task.operation == "translate" and task.options.get("output_pdf"):
+                pdf_target = target.with_suffix(".pdf")
+                try:
+                    word_to_pdf(target, pdf_target, task.options, progress, cancel)
+                    produced.append(pdf_target)
+                except Cancelled:
+                    raise
+                except Exception:
+                    saved = publish(target, Path(task.output), target.stem, target.suffix)
+                    events.put(("output", str(saved)))
+                    raise ValueError("译文 DOCX 已保存，但 PDF 导出失败。请查看 Word/LibreOffice 状态后重试；已保留翻译断点。") from None
         else:
             from .pdf_tools import process_pdf
             produced = process_pdf(task.operation, task.sources, stage, task.options, progress, cancel)
@@ -138,8 +159,8 @@ class TaskManager(QObject):
                         task.status = "中断"
                         task.message = "上次退出时未完成；点击重试，翻译可恢复断点。"
                     self.tasks.append(task)
-            except (ValueError, TypeError, OSError):
-                pass
+            except (ValueError, TypeError, OSError, AttributeError):
+                raise ValueError("任务历史无法安全读取，请从备份恢复 tasks.json；原始记录未修改。") from None
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.poll)
         self.timer.start(150)

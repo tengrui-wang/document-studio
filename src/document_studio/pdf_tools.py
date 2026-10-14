@@ -28,14 +28,15 @@ def pdf_to_word(source: Path, dest: Path, progress, cancel):
     from pdf2docx import Converter
     converter = Converter(str(source))
     try:
-        converter.convert(str(dest), multi_processing=False)
+        # Upstream otherwise silently skips pages that fail parsing.
+        converter.convert(str(dest), multi_processing=False, ignore_page_error=False, raw_exceptions=True)
     finally:
         converter.close()
     check_cancel(cancel)
     progress(95, "已生成 Word，正在保存")
 
 
-def render_processed(page, dpi=144, threshold=180, monochrome=False, preserve_images=True):
+def render_processed(page, dpi=144, threshold=180, monochrome=False, preserve_images=True, enhance_text=False):
     scale = dpi / 72
     if page.rect.width * page.rect.height * scale * scale > 25_000_000:
         raise ValueError("页面过大，请降低 DPI（单页限制 2500 万像素）。")
@@ -45,12 +46,15 @@ def render_processed(page, dpi=144, threshold=180, monochrome=False, preserve_im
     minimum = pixels.min(axis=2)
     # Pale background removal leaves dark glyphs and saturated marks intact.
     pixels[minimum >= threshold] = 255
+    if enhance_text:
+        maximum = pixels.max(axis=2)
+        pixels[(maximum <= 110) & ((maximum.astype(np.int16) - pixels.min(axis=2)) <= 35)] = 0
     if monochrome:
         gray = (pixels[..., 0].astype(np.float32) * .299 + pixels[..., 1] * .587 + pixels[..., 2] * .114)
         pixels[:] = np.where(gray[..., None] >= threshold, 255, 0)
     if preserve_images:
         for image in page.get_image_info():
-            rect = fitz.Rect(image["bbox"]) & page.rect
+            rect = (fitz.Rect(image["bbox"]) * page.rotation_matrix) & page.rect
             if rect.is_empty:
                 continue
             x0 = max(0, int((rect.x0 - page.rect.x0) * scale))
@@ -124,8 +128,16 @@ def process_pdf(operation, sources, stage: Path, options, progress, cancel):
                         pix = render_processed(doc[number], int(options.get("dpi", 144)),
                                                int(options.get("threshold", 180)),
                                                options.get("monochrome", False),
-                                               options.get("preserve_images", True))
-                        page = out.new_page(width=doc[number].rect.width, height=doc[number].rect.height)
+                                               options.get("preserve_images", True), options.get("enhance_text", False))
+                        if options.get("keep_text", False):
+                            if not doc[number].get_text().strip():
+                                raise ValueError(f"第 {number + 1} 页没有原始文字层，无法保留搜索；当前模式不提供 OCR。")
+                            out.insert_pdf(doc, from_page=number, to_page=number)
+                            page = out[-1]
+                            if page.rotation:
+                                page.remove_rotation()
+                        else:
+                            page = out.new_page(width=doc[number].rect.width, height=doc[number].rect.height)
                         page.insert_image(page.rect, pixmap=pix)
                     else:
                         out.insert_pdf(doc, from_page=number, to_page=number)

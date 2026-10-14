@@ -23,15 +23,17 @@ if (-not $workerTest.WaitForExit(120000)) { $workerTest.Kill(); throw 'Packaged 
 if ($workerTest.ExitCode -ne 0) { throw "Packaged worker test failed; see $reportPath" }
 New-Item -ItemType Directory -Force release | Out-Null
 $appVersion = (& $Python -c 'from document_studio import __version__; print(__version__)').Trim()
+$appNumericVersion = (& $Python -c 'from document_studio import __version__; from packaging.version import Version; print(".".join(map(str, (list(Version(__version__).release)+[0,0,0,0])[:4])))').Trim()
 Compress-Archive -LiteralPath "$projectRoot\dist\DocumentStudio" -DestinationPath "$projectRoot\release\DocumentStudio-$appVersion-Windows-x64.zip" -Force
 $compiler = Get-Command ISCC.exe -ErrorAction SilentlyContinue
 $innoPath = if ($compiler) { $compiler.Source } else { 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' }
 if (Test-Path -LiteralPath $innoPath) {
-    & $innoPath "/DAppVersion=$appVersion" packaging/installer.iss
+    & $innoPath "/DAppVersion=$appVersion" "/DAppNumericVersion=$appNumericVersion" packaging/installer.iss
     Assert-Success 'Inno Setup'
 } else {
     Write-Host 'Portable ZIP built. Installer will be built by GitHub Actions using Inno Setup.'
 }
+Copy-Item -LiteralPath "$projectRoot\CHANGELOG.md" -Destination "$projectRoot\release\RELEASE-NOTES.md" -Force
 Get-ChildItem -LiteralPath "$projectRoot\release" -File | Where-Object { $_.Extension -in '.zip', '.exe' } | ForEach-Object {
     $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower()
     "$hash  $($_.Name)" | Set-Content -LiteralPath "$($_.FullName).sha256" -Encoding ascii

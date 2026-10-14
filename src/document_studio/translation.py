@@ -11,6 +11,7 @@ from docx.oxml.ns import qn
 from .common import check_cancel
 from .storage import atomic_json
 from .word_tools import assign_text, text_groups
+from .api import TranslationValidationError
 
 
 def digest_file(source: Path):
@@ -80,6 +81,25 @@ def translate_docx(source: Path, dest: Path, options, client, cache_dir: Path, p
         completed = len(entries) - len(pending)
         progress(int(85 * completed / len(entries)), f"翻译断点：已恢复 {completed}/{len(entries)} 分块")
         cursor = 0
+        def translate_batch(batch):
+            nonlocal completed
+            check_cancel(cancel)
+            try:
+                translated = client.translate(options["model"], batch, options["source_lang"],
+                                              options["target_lang"], options.get("glossary", ""))
+            except TranslationValidationError:
+                if len(batch) == 1:
+                    raise
+                middle = len(batch) // 2
+                translate_batch(batch[:middle])
+                translate_batch(batch[middle:])
+                return
+            for item in translated:
+                cache["translations"][item["id"]] = item["text"]
+            atomic_json(checkpoint, cache)
+            completed += len(batch)
+            progress(int(85 * completed / len(entries)), f"已翻译并保存断点 {completed}/{len(entries)}")
+
         while cursor < len(pending):
             check_cancel(cancel)
             batch, length = [], 0
@@ -90,13 +110,7 @@ def translate_docx(source: Path, dest: Path, options, client, cache_dir: Path, p
                 batch.append(entry)
                 length += len(entry["text"])
                 cursor += 1
-            translated = client.translate(options["model"], batch, options["source_lang"],
-                                          options["target_lang"], options.get("glossary", ""))
-            for item in translated:
-                cache["translations"][item["id"]] = item["text"]
-            atomic_json(checkpoint, cache)
-            completed += len(batch)
-            progress(int(85 * completed / len(entries)), f"已翻译并保存断点 {completed}/{len(entries)}")
+            translate_batch(batch)
         check_cancel(cancel)
         for nodes, ids in groups:
             assign_text(nodes, "".join(cache["translations"][ident] for ident in ids))
