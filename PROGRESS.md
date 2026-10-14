@@ -14,7 +14,14 @@
 - 已完成 PyInstaller、Inno Setup、标签 Release 的 GitHub Actions，以及对应源码/许可分发。
 - 验证：18 个必要自动测试通过；源码 UI 启动与八页构造通过；真实本机 Word 导出合成 DOCX 成功；Windows Credential Manager 合成凭据保存/读取/删除成功；EXE UI 启动返回 0。
 - 固定 PySide6 6.8.3，修复本机新版 Qt DLL 加载失败。固定依赖见 requirements-lock.txt。
-- 本机检测到非交互 GitHub 授权，拟发布到 tengrui-wang/document-studio；实际仓库/Release 状态稍后补记。
+- 本机便携包已构建：release/DocumentStudio-0.1.0-Windows-x64.zip（137,978,399 字节），附 SHA256。
+- 打包后的真实 EXE 启动成功，离线自测成功：安全凭据后端导入、独立子进程 PDF 文本提取/PDF 转 Word/Word 替换并生成输出。报告在 build/packaged-selftest.json（不提交构建目录）。
+- GitHub 仓库已创建并推送：[tengrui-wang/document-studio](https://github.com/tengrui-wang/document-studio)，标签 v0.1.0 已推送。
+- 标签自动构建：[run 38496679605](https://github.com/tengrui-wang/document-studio/actions/runs/38496679605)，Windows 构建与 Release 两个作业均 **success**。
+- [v0.1.0 Release](https://github.com/tengrui-wang/document-studio/releases/tag/v0.1.0) 已发布，包含 DocumentStudio-0.1.0-Setup.exe、便携 ZIP、两份 SHA256 与 DocumentStudio-Source.zip。
+- 已将 Release 安装包下载至本机 release/DocumentStudio-0.1.0-Setup.exe（98,658,180 字节）；SHA256 与发布附件一致：9b6b4e14898b23fcfef2eac135e01606bde34d92406bdca86fffc2cd4f60650b。未进行系统安装；完整安装验收留待最终版。
+- 本机源码对应标签归档：release/DocumentStudio-0.1.0-Source.zip。源码只包含 Git 跟踪的程序/文档/测试/许可，不包含私人文档、密钥、断点或构建目录。
+- 已按后续用户 AGENTS 规则补充 AGENTS.md 和 PROJECT_STATUS.md；依赖安装与修改仅在项目 .venv 内，未改变共享环境或系统软件。
 
 ## 未完成 / 待优化（不假称已完成）
 - OCR 与扫描文档翻译；科学论文原版式 PDF 翻译 / PDFMathTranslate 或 BabelDOC 可选后端。

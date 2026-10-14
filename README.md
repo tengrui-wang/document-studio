@@ -2,6 +2,8 @@
 
 Windows 10/11 的中文 Word/PDF 文档工作台，当前版本 **0.1.0**。离线工具本地执行，翻译使用您主动配置的云端 API。项目采用 AGPL-3.0-or-later。
 
+[GitHub 仓库](https://github.com/tengrui-wang/document-studio) · [v0.1.0 下载](https://github.com/tengrui-wang/document-studio/releases/tag/v0.1.0)
+
 ## 普通用户
 
 从 GitHub Releases 下载 `DocumentStudio-0.1.0-Setup.exe` 安装，或解压 `DocumentStudio-0.1.0-Windows-x64.zip` 后双击 `DocumentStudio/DocumentStudio.exe`。无需安装 Python。
@@ -11,7 +13,7 @@ Windows 10/11 的中文 Word/PDF 文档工作台，当前版本 **0.1.0**。离�
 3. 翻译前在“AI 模型管理”选择服务商，填 API Key，保存配置。获取模型列表或逐行添加模型 ID。
 4. 在翻译页明确选择服务配置、模型与目标语言，执行后生成新 DOCX。没有密钥时离线工具照常使用。
 
-首次发布状态见 [PROGRESS.md](PROGRESS.md)。未发布前可使用本地 `dist/DocumentStudio/DocumentStudio.exe` 或 `release/` 中便携包。
+项目状态见 [PROJECT_STATUS.md](PROJECT_STATUS.md)，详细进度见 [PROGRESS.md](PROGRESS.md)。可使用本地 `dist/DocumentStudio/DocumentStudio.exe` 或 `release/` 中便携包。
 
 ## 已实现
 
