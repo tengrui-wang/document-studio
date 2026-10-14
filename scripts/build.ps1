@@ -22,8 +22,10 @@ $workerTest = Start-Process -FilePath "$projectRoot\dist\DocumentStudio\Document
 if (-not $workerTest.WaitForExit(120000)) { $workerTest.Kill(); throw 'Packaged worker test timed out' }
 if ($workerTest.ExitCode -ne 0) { throw "Packaged worker test failed; see $reportPath" }
 New-Item -ItemType Directory -Force release | Out-Null
-$appVersion = (& $Python -c 'from document_studio import __version__; print(__version__)').Trim()
-$appNumericVersion = (& $Python -c 'from document_studio import __version__; from packaging.version import Version; print(".".join(map(str, (list(Version(__version__).release)+[0,0,0,0])[:4])))').Trim()
+$appVersion = (& $Python "$PSScriptRoot\version.py").Trim()
+Assert-Success 'Read application version'
+$appNumericVersion = (& $Python "$PSScriptRoot\version.py" --numeric).Trim()
+Assert-Success 'Read numeric Windows version'
 Compress-Archive -LiteralPath "$projectRoot\dist\DocumentStudio" -DestinationPath "$projectRoot\release\DocumentStudio-$appVersion-Windows-x64.zip" -Force
 $compiler = Get-Command ISCC.exe -ErrorAction SilentlyContinue
 $innoPath = if ($compiler) { $compiler.Source } else { 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' }

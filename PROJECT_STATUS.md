@@ -1,6 +1,13 @@
 # Document Studio 项目状态
 
-版本：0.1.0 核心预览版。详细开发记录与待办见 [PROGRESS.md](PROGRESS.md)，需求见 [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md)。
+开发版本：0.2.0b1 / v0.2.0-beta.1（预览）。旧版 v0.1.0 保留。详细开发记录与待办见 [PROGRESS.md](PROGRESS.md)，需求见 [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md)。
+
+## 第二轮状态
+- 已实现更新说明、正式/预览通道、无需 Token 的安装包下载与 SHA256 校验、退出后安装交接、升级前备份和旧配置兼容。
+- 沿用 AppId/安装目录/数据目录/凭据服务；默认卸载保留个人数据。真实 Windows CI 生命周期脚本已写，首次运行仅发现 shell 构建问题，**安装验证尚未通过**。
+- 38 项必要测试、本机打包启动/子进程自测、真实 Word 合成译文 PDF 输出通过。
+- 新增白化文字层保留和旋转页图片修复；严格 PDF 转 Word 页错误；数字遗漏检查与自动拆批；术语持久化与 PDF 导出失败保留 DOCX。
+- 下一步见 PROGRESS.md；OCR、原版式 PDF 翻译不交付，方案见 docs/ADVANCED_ROUND2.md。无真实付费 API 使用、无用户机器安装/卸载测试。
 
 ## 已交付
 - Python/PySide6 源码、八个中文功能页、离线 Word/PDF 处理、批量任务及云端翻译管理。
