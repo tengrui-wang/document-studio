@@ -544,7 +544,7 @@ class TasksPage(QWidget):
         row = QHBoxLayout()
         row.addWidget(button("取消选中", lambda: self.act("cancel")))
         row.addWidget(button("重试选中", lambda: self.act("retry")))
-        row.addWidget(button("打开输出文件", self.open_output))
+        row.addWidget(button("打开结果 / 更新设置", self.open_output))
         row.addWidget(button("打开输出目录", self.open_folder))
         row.addWidget(button("查看详细信息", self.details))
         layout.addLayout(row)
@@ -580,6 +580,11 @@ class TasksPage(QWidget):
 
     def open_output(self):
         task = self.selected()
+        if task and task.operation == "download_update" and task.status == "完成":
+            # Never execute installers via generic file opening: backup/hash/handoff is mandatory.
+            self.window.preferences.receive_update(task)
+            self.window.nav.setCurrentRow(7)
+            return
         if task and task.outputs:
             QDesktopServices.openUrl(QUrl.fromLocalFile(task.outputs[0]))
         elif task and task.result.get("url"):

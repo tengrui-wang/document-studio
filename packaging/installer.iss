@@ -59,4 +59,3 @@ begin
   else
     Result := '';
 end;
-

@@ -32,3 +32,23 @@ def test_glossary_persists_and_update_controls_are_wired(tmp_path):
     assert window.translate.save_preferences()
     assert Settings(tmp_path).data["glossary"] == "new = 新"
     window.close()
+
+
+def test_task_output_cannot_bypass_verified_upgrade(tmp_path, monkeypatch):
+    from document_studio.jobs import Task
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow(Settings(tmp_path))
+    installer = tmp_path / "synthetic.exe"
+    installer.write_bytes(b"synthetic, never executed")
+    result = {"installer": str(installer), "sha256": "0" * 64,
+              "release": {"tag": "v0.3.0", "version": "0.3.0", "notes": "synthetic update"}}
+    task = Task("download", "download_update", [], "", status="完成", result=result, outputs=[str(installer)])
+    window.manager.add(task)
+    def forbidden(*args):
+        raise AssertionError("Generic URL opening must never run the installer")
+    monkeypatch.setattr("document_studio.app.QDesktopServices.openUrl", forbidden)
+    tasks_page = window.stack.widget(5).widget()
+    tasks_page.open_output()
+    assert window.nav.currentRow() == 7
+    assert window.preferences.downloaded == result
+    window.close()
